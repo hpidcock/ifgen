@@ -7,8 +7,6 @@ import (
 	"go/types"
 	"reflect"
 	"strconv"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // astExprForType returns the ast.Expr for the types.Type, adding any
@@ -19,6 +17,11 @@ func astExprForType(t types.Type, defaultImport string, imports map[string]int) 
 		switch x.Obj().Name() {
 		case "error":
 			return ast.NewIdent("error")
+		case "compareable":
+			return ast.NewIdent("compareable")
+		case "any":
+			// Might not be needed, does an any always come over as a types.Interface?
+			return ast.NewIdent("any")
 		}
 		pkg := defaultImport
 		if x.Obj().Pkg() != nil {
@@ -73,10 +76,40 @@ func astExprForType(t types.Type, defaultImport string, imports map[string]int) 
 			return &ast.Ident{Name: "bool"}
 		case types.Int:
 			return &ast.Ident{Name: "int"}
+		case types.Int8:
+			return &ast.Ident{Name: "int8"}
+		case types.Int16:
+			return &ast.Ident{Name: "int16"}
+		case types.Int32:
+			// TODO: figure out how to handle int32==rune
+			return &ast.Ident{Name: "int32"}
 		case types.Int64:
 			return &ast.Ident{Name: "int64"}
+		case types.Uint:
+			return &ast.Ident{Name: "uint"}
+		case types.Uint8:
+			// TODO: figure out how to handle uint8==byte
+			return &ast.Ident{Name: "uint8"}
+		case types.Uint16:
+			return &ast.Ident{Name: "uint16"}
+		case types.Uint32:
+			return &ast.Ident{Name: "uint32"}
+		case types.Uint64:
+			return &ast.Ident{Name: "uint64"}
+		case types.Uintptr:
+			return &ast.Ident{Name: "uintptr"}
+		case types.Float32:
+			return &ast.Ident{Name: "float32"}
+		case types.Float64:
+			return &ast.Ident{Name: "float64"}
+		case types.Complex64:
+			return &ast.Ident{Name: "complex64"}
+		case types.Complex128:
+			return &ast.Ident{Name: "complex128"}
 		case types.String:
 			return &ast.Ident{Name: "string"}
+		case types.UnsafePointer:
+			panic("unsafe pointer is not implemented")
 		default:
 			panic(fmt.Sprintf("unhandled basic kind %v", x.Kind()))
 		}
@@ -84,8 +117,54 @@ func astExprForType(t types.Type, defaultImport string, imports map[string]int) 
 		if x.Empty() {
 			return ast.NewIdent("any")
 		}
-		spew.Dump(x)
-		panic("interface")
+		out := &ast.InterfaceType{
+			Methods: &ast.FieldList{},
+		}
+		for i := 0; i < x.NumMethods(); i++ {
+			meth := x.Method(i)
+			if !meth.Exported() {
+				continue
+			}
+
+			sig := meth.Signature()
+			funcType := &ast.FuncType{
+				Params:  &ast.FieldList{},
+				Results: &ast.FieldList{},
+			}
+
+			for j := 0; j < sig.Params().Len(); j++ {
+				param := sig.Params().At(j)
+				f := &ast.Field{}
+				if param.Name() != "" {
+					f.Names = append(f.Names, ast.NewIdent(param.Name()))
+				}
+				f.Type = astExprForType(param.Type(), defaultImport, imports)
+				if sig.Variadic() && j == sig.Params().Len()-1 {
+					f.Type = &ast.Ellipsis{
+						Elt: f.Type.(*ast.ArrayType).Elt,
+					}
+				}
+				funcType.Params.List = append(funcType.Params.List, f)
+			}
+
+			for j := 0; j < sig.Results().Len(); j++ {
+				param := sig.Results().At(j)
+				f := &ast.Field{}
+				if param.Name() != "" {
+					f.Names = append(f.Names, ast.NewIdent(param.Name()))
+				}
+				f.Type = astExprForType(param.Type(), defaultImport, imports)
+				funcType.Results.List = append(funcType.Results.List, f)
+			}
+			field := &ast.Field{
+				Names: []*ast.Ident{{
+					Name: meth.Name(),
+				}},
+				Type: funcType,
+			}
+			out.Methods.List = append(out.Methods.List, field)
+		}
+		return out
 	case *types.Signature:
 		t := &ast.FuncType{
 			Params:  &ast.FieldList{},
@@ -122,7 +201,24 @@ func astExprForType(t types.Type, defaultImport string, imports map[string]int) 
 		}
 		return t
 	case *types.Struct:
-		panic("struct")
+		t := &ast.StructType{
+			Fields: &ast.FieldList{},
+		}
+		for i := 0; i < x.NumFields(); i++ {
+			f := x.Field(i)
+			af := &ast.Field{
+				Type: astExprForType(f.Type(), defaultImport, imports),
+			}
+			if f.Name() != "" {
+				af.Names = append(af.Names, ast.NewIdent(f.Name()))
+			}
+			tag := x.Tag(i)
+			if tag != "" {
+				af.Tag = &ast.BasicLit{Kind: token.STRING, Value: tag}
+			}
+			t.Fields.List = append(t.Fields.List, af)
+		}
+		return t
 	case *types.Pointer:
 		return &ast.StarExpr{
 			X: astExprForType(x.Elem(), defaultImport, imports),
