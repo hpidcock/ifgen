@@ -83,8 +83,10 @@ func main() {
 
 	// Generate the impure full interfaces.
 	g := NewGen(outputPkgName, impureName, "impure")
-	for pkgPath, mapped := range loadedTypes {
-		for targetName, t := range mapped {
+	for _, pkgPath := range slices.Sorted(maps.Keys(loadedTypes)) {
+		mapped := loadedTypes[pkgPath]
+		for _, targetName := range slices.Sorted(maps.Keys(mapped)) {
+			t := mapped[targetName]
 			err = g.AddInterface(t, targetName, pkgPath, nil)
 			if err != nil {
 				panic(err)
@@ -161,8 +163,10 @@ func main() {
 	// Write out the final pure interfaces with just the
 	// methods required.
 	g3 := NewGen(outputPkgName, normalName, "!impure")
-	for pkgPath, mapped := range loadedTypes {
-		for targetName, t := range mapped {
+	for _, pkgPath := range slices.Sorted(maps.Keys(loadedTypes)) {
+		mapped := loadedTypes[pkgPath]
+		for _, targetName := range slices.Sorted(maps.Keys(mapped)) {
+			t := mapped[targetName]
 			filter := map[string]bool{}
 			for _, v := range wants[targetName] {
 				filter[v] = true
