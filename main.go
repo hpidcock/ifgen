@@ -124,62 +124,77 @@ func main() {
 		panic(err)
 	}
 
-	// Test building with the empty interfaces. This should
-	// fail if there are calls or uses of methods in the empty
-	// interfaces.
-	buf = &bytes.Buffer{}
-	errBuf := &bytes.Buffer{}
-	cmd = exec.Command("go", "build")
-	cmd.Dir = dir
-	cmd.Stderr = errBuf
-	cmd.Stdout = buf
-	err = cmd.Run()
-	if err == nil {
-		os.Exit(0)
-		return
-	}
-
-	// Read the error log from the build and add in all the
-	// missing methods.
 	wants := map[string][]string{}
-	errReader := bufio.NewReader(errBuf)
-	for {
-		line, err := errReader.ReadString('\n')
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			panic(err)
-		}
-		if !strings.Contains(line, "undefined") {
-			continue
-		}
-		res := missingMethod.FindStringSubmatch(line)
-		if res == nil {
-			continue
-		}
-		wants[res[1]] = append(wants[res[1]], res[2])
-	}
+	more := true
+	for more {
+		more = false
 
-	// Write out the final pure interfaces with just the
-	// methods required.
-	g3 := NewGen(outputPkgName, normalName, "!impure")
-	for _, pkgPath := range slices.Sorted(maps.Keys(loadedTypes)) {
-		mapped := loadedTypes[pkgPath]
-		for _, targetName := range slices.Sorted(maps.Keys(mapped)) {
-			t := mapped[targetName]
-			filter := map[string]bool{}
-			for _, v := range wants[targetName] {
-				filter[v] = true
-			}
-			err = g3.AddInterface(t, targetName, pkgPath, filter)
-			if err != nil {
+		// Test building with the empty interfaces. This should
+		// fail if there are calls or uses of methods in the empty
+		// interfaces.
+		buf = &bytes.Buffer{}
+		errBuf := &bytes.Buffer{}
+		cmd = exec.Command("go", "build")
+		cmd.Dir = dir
+		cmd.Stderr = errBuf
+		cmd.Stdout = buf
+		err = cmd.Run()
+		if err == nil {
+			os.Exit(0)
+			return
+		}
+
+		newWants := false
+		// Read the error log from the build and add in all the
+		// missing methods.
+		errReader := bufio.NewReader(errBuf)
+		for {
+			line, err := errReader.ReadString('\n')
+			if errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
 				panic(err)
 			}
+			if strings.Contains(line, "too many errors") {
+				more = newWants
+				break
+			}
+			if !strings.Contains(line, "undefined") {
+				continue
+			}
+			res := missingMethod.FindStringSubmatch(line)
+			if res == nil {
+				continue
+			}
+			wants[res[1]] = append(wants[res[1]], res[2])
+			newWants = true
 		}
-	}
-	err = g3.Write(dir)
-	if err != nil {
-		panic(err)
+		if !newWants {
+			_, _ = io.Copy(os.Stderr, errReader)
+			panic("errors while trying pure interface")
+		}
+
+		// Write out the final pure interfaces with just the
+		// methods required.
+		g3 := NewGen(outputPkgName, normalName, "!impure")
+		for _, pkgPath := range slices.Sorted(maps.Keys(loadedTypes)) {
+			mapped := loadedTypes[pkgPath]
+			for _, targetName := range slices.Sorted(maps.Keys(mapped)) {
+				t := mapped[targetName]
+				filter := map[string]bool{}
+				for _, v := range wants[targetName] {
+					filter[v] = true
+				}
+				err = g3.AddInterface(t, targetName, pkgPath, filter)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}
+		err = g3.Write(dir)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
